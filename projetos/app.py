@@ -1,16 +1,23 @@
 from flask import Flask, request, jsonify, render_template
 import redis
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 
-# Conectar ao Redis
-r = redis.StrictRedis(host='localhost', port=6379, db=0, decode_responses=True)
+# Configuração do Redis
+REDIS_HOST = "localhost"
+REDIS_PORT = 6379
+REDIS_DB = 0
+r = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, decode_responses=True)
 
-# Função para verificar se o usuário existe no Redis
+# Função para obter usuário do Redis
 def get_user_from_redis(email):
     user_key = f"user:{email}"
-    user_data = r.hgetall(user_key)
-    return user_data
+    return r.hgetall(user_key)
+
+# Função para resposta padronizada
+def response(success, message, status=200):
+    return jsonify({"success": success, "message": message}), status
 
 @app.route('/')
 def index():
@@ -23,42 +30,38 @@ def about():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'GET':
-        return render_template('login.html')  # Exibe o formulário de login
+        return render_template('login.html')
     
-    elif request.method == 'POST':
-        data = request.form
-        email = data.get("email")
-        password = data.get("password")
+    data = request.form
+    email = data.get("email")
+    password = data.get("password")
 
-        # Tentar obter o usuário do Redis
-        user_data = get_user_from_redis(email)
-
-        if user_data and user_data.get("password") == password:
-            return jsonify({"message": f"Login bem-sucedido! Bem-vindo, {email}"}), 200
-
-        return jsonify({"error": "Credenciais invalidas"}), 401
+    user_data = get_user_from_redis(email)
+    if user_data and check_password_hash(user_data.get("password"), password):
+        return response(True, f"Login bem-sucedido! Bem-vindo, {email}")
+    
+    return response(False, "Credenciais invalidas", 401)
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'GET':
-        return render_template('register.html')  # Renderiza o formulário de cadastro
-    elif request.method == 'POST':
-        data = request.form
-        email = data.get("email")
-        password = data.get("password")
+        return render_template('register.html')
+    
+    data = request.form
+    email = data.get("email")
+    password = data.get("password")
 
-        if not email or not password:
-            return jsonify({"error": "Todos os campos sao obrigatórios"}), 400
+    if not email or not password:
+        return response(False, "Todos os campos sao obrigatórios", 400)
 
-        # Verificar se o usuário já existe
-        if get_user_from_redis(email):
-            return jsonify({"error": "Usuario ja registrado com esse email"}), 400
+    if get_user_from_redis(email):
+        return response(False, "Usuario ja registrado com esse email", 400)
 
-        # Salvar o usuário no Redis usando um hash
-        user_key = f"user:{email}"
-        r.hset(user_key, "password", password)
+    hashed_password = generate_password_hash(password)
+    user_key = f"user:{email}"
+    r.hset(user_key, "password", hashed_password)
 
-        return jsonify({"message": "Usuario registrado com sucesso!"}), 201
+    return response(True, "Usuario registrado com sucesso!", 201)
 
 @app.route('/static/assets.js')
 def static_assets():
